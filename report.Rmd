@@ -1,0 +1,159 @@
+---
+title: "ML application: Preciction of activity type"
+output: github_document
+---
+
+```{r setup, include=FALSE, warning=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## Project purpose & setup intro
+
+This project is aimed for prediction modelling of activity type of a subject, given the measurements of wearable 
+devicies, recording accelerations and misc dynamic data.
+
+The problem is typical example of supervised machine learning: we have the training data on ~19k records of 152 measurements and the activity label we need to predict. There are 6 possible labels. The source of data is as follows:
+
+## The input data
+
+```{r get_data}
+dtrain<-read.csv("https://d396qusza40orc.cloudfront.net/predmachlearn/pml-training.csv")
+dtest<-read.csv("https://d396qusza40orc.cloudfront.net/predmachlearn/pml-testing.csv")
+```
+
+## Initial data purification
+Before we start doing any inference and working with the data, let us limit the data to the set of variables, which allow for meaningful inclusion in the model (as we will now further, there is no caused quality loss observed):
+
+```{r trunc_data, warning=FALSE, cache=FALSE}
+var_names<-names(dtrain)[!(names(dtrain)%in%c('user_name','classe','X','raw_timestamp_part_1','raw_timestamp_part_2',
+                                              'cvtd_timestamp','new_window','num_window'))]
+nfill<-sapply(var_names, function(i){
+    sum(!is.na(as.numeric(as.character(dtrain[,i]))))/nrow(dtrain)}
+)
+var_names<-names(nfill[nfill>0.05])
+cors<-sapply(var_names, function(i){
+  cor(as.numeric(dtrain$classe),as.numeric(dtrain[,i]), use = "pairwise.complete.obs")
+})
+var_names<-names(cors[abs(cors)>0.03])
+dtrain<-dtrain[,c(var_names,"classe")]
+```
+
+Here we excluded all the variables which were present in less than 5% cases, omitted model irrelevant data, like user id and record time (despite having user id in the test data, we don't expect it to be normal practice to limit the model by users list; daytime could be of interest = who's walking downstairs in in midnight?, but omitted at this stage).
+
+Also we excluded variables with small correlation with the responce: cor() could be not the perfect measure, since we actually have factor data, but I though that aov() or rank criteria would complicate the study. Therefore, we're left with ~30 predictor variables, namely:
+```{r var_names, include=FALSE}
+var_names
+```
+## Initial technique selection
+As a setup. we have 30 continuous variables and factor response variable which takes 5 levels, quite evenly frequent. 
+
+Declined techs: Therefore, I've declined GLM-based techniques (though we can predict 5 two-level responses for each outcome state, but such constructions are quite rate, plus as we will see later, we do not have usual continuous distributions for the most of variables values, two-piked histograms do not allow for typical assumptionsto hold. Neural nets application would be complicated here as well. GBM or similar also did not seem fit here.
+
+Model candidates: We initially included the following setups:
+* SVM
+* C&RT, like rpart package
+* Random forest
+
+So, we include the following libraries:
+
+```{r libs, results="hide", message=FALSE}
+require(rpart)
+require(randomForest)
+require(e1071)
+require(caret)
+```
+
+Let uscreate the relatively small subset of the data (to speed-up the computations), create the partition using caret, train and assess the accuracy (% of correct guesses) on the test partision subset.
+```{r rough_models_comp}
+set.seed(145)
+inRough<-sample(1:nrow(dtrain),5000)
+dtrainRoughTrain<-dtrain[inRough,c(var_names,"classe")][1:4000,]
+dtrainRoughTest<-dtrain[inRough,c(var_names,"classe")][4001:5000,]
+accuracy<-function(model,testData){
+  class.pred <- table(predict(model, newdata = testData,type='class'), testData$classe)
+  sum(diag(class.pred))/sum(class.pred)
+}
+accuracy(rpart(factor(classe)~.,dtrainRoughTrain),dtrainRoughTest)        #Accuracy for <rpart> method
+accuracy(svm(factor(classe)~.,dtrainRoughTrain),dtrainRoughTest)          #Accuracy for <svm> method
+accuracy(randomForest(factor(classe)~.,dtrainRoughTrain),dtrainRoughTest) #Accuracy for <random forest> method
+```
+Apparently, Random forest perform times better than others, therefore we won't be making any use of the other models thereafter.
+
+## Use cross-validation to tune the RF model
+
+We used cross-validation for the only purpose: show that there are no significant gains in stipulating main parameters of random forest: number of varibles for each partition $mtry$. The same holds for the number of trees.
+Error rates, observed using cross-validation by 10-folds, do not give any impact on the precision: the change in error rate is less than 5%.
+
+```{r cv, message=FALSE, warning=FALSE}
+set.seed(145)
+tunegrid <- expand.grid(.mtry=c(1:5*6))
+fit <- train(factor(classe)~., dtrainRoughTrain[1:1000,], method = "rf", tuneGrid=tunegrid,
+                 trControl = trainControl(method = "cv",number=10))
+
+plot_err.data<-data.frame()
+for(i in 1:6){
+  plot_err.data<<-rbind(plot_err.data,data.frame(var=names(data.frame(fit$finalModel$err.rate))[i],
+                                                 val=fit$finalModel$err.rate[,i],
+                                                 type='number of trees',
+                                                 value=1:500))
+}
+plot_err.data<-rbind(plot_err.data,
+                     data.frame(var='all',
+                                val=1-fit$results$Accuracy,
+                                type='Number of variables in each split (mtry)',
+                                value=fit$results$mtry))
+require(scales)
+ggplot(data=plot_err.data,aes(x=value, y=val, colour=var))+geom_line()+scale_y_continuous(labels = scales::percent)+facet_grid(.~type,scales = "free")+geom_smooth()
+```
+
+The same is true for applying the cutoff using Singular vector decomposition and/or scaling/centering.
+
+## Variable importance and descriptive charts
+
+Now, let's use all the available train data to assess variables importance:
+```{r importance, message=FALSE, warning=FALSE}
+fit<-randomForest(factor(classe)~.,dtrain)
+imp<-data.frame(name=rownames(importance(fit)),importance(fit))
+imp<-imp[order(imp$MeanDecreaseGini,decreasing = T),]
+imp$id<-as.character(100+1:30)
+ggplot(imp,aes(id,MeanDecreaseGini,label=id))+
+  geom_bar(stat="identity")+
+  scale_x_discrete(breaks=as.character(100+1:30),
+                   labels=imp$name)+theme(axis.text.x = element_text(angle = 90, hjust = 1))
+```
+
+The internal organization of the classes with respect to the most important 5 variables is as below:
+
+```{r descriptives, message=FALSE, warning=FALSE}
+library(ggplot2)
+library(GGally)
+ds<-dtrain[sample(1:nrow(dtrain),size = 500),c('classe',rownames(imp)[1:5])]
+ggpairs(columns = names(ds), data = ds,mapping = aes(colour=classe,alpha=0.5))
+```
+
+##Error & predictions
+
+Finally, we build the model and assess the validation error distribution.
+By bootstrapping, 10x rf models produce the estimate of the error on the validation set.
+```{r error_boot}
+set.seed(145)
+nmodels<-10
+inValidateParts<-createDataPartition(dtrain$classe,p = 0.1,time=nmodels)
+models<-list()
+validate_errors<-list()
+
+for(i in 1:nmodels){
+  inValidate<-inValidateParts[[i]]
+  dvalidate<-dtrain[inValidate,c(var_names,"classe")]
+  dtrain_cut<-dtrain[-inValidate,c(var_names,"classe")]
+  rf_model<-randomForest(classe~.,dtrain_cut)
+  models[[i]]<-rf_model
+  validate_errors[[i]]<-1-accuracy(rf_model,dvalidate)
+}
+mean(unlist(validate_errors))
+```
+
+And the final prediction which must give 99% accuracy:
+```{r prediction}
+predict(models[[1]],dtest)
+```

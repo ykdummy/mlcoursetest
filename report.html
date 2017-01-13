@@ -1,0 +1,149 @@
+<html>
+
+<head>
+<style type="text/css">
+.knitr .inline {
+  background-color: #f7f7f7;
+  border:solid 1px #B0B0B0;
+}
+.error {
+	font-weight: bold;
+	color: #FF0000;
+}
+.warning {
+	font-weight: bold;
+}
+.message {
+	font-style: italic;
+}
+.source, .output, .warning, .error, .message {
+	padding: 0 1em;
+  border:solid 1px #F7F7F7;
+}
+.source {
+  background-color: #f5f5f5;
+}
+.rimage .left {
+  text-align: left;
+}
+.rimage .right {
+  text-align: right;
+}
+.rimage .center {
+  text-align: center;
+}
+.hl.num {
+  color: #AF0F91;
+}
+.hl.str {
+  color: #317ECC;
+}
+.hl.com {
+  color: #AD95AF;
+  font-style: italic;
+}
+.hl.opt {
+  color: #000000;
+}
+.hl.std {
+  color: #585858;
+}
+.hl.kwa {
+  color: #295F94;
+  font-weight: bold;
+}
+.hl.kwb {
+  color: #B05A65;
+}
+.hl.kwc {
+  color: #55aa55;
+}
+.hl.kwd {
+  color: #BC5A65;
+  font-weight: bold;
+}
+</style>
+<title>Title</title>
+</head>
+
+<body>
+
+<p>This project is aimed for prediction modelling of activity type of a subject, given the measurements of wearable 
+devicies, recording accelerations and misc dynamic data.</p>
+
+<p>The problem is typical example of supervised machine learning: we have the training data on ~19k records of 152 measurements and the activity label we need to predict. There are 6 possible labels. The source of data is as follows:</p>
+
+<div class="chunk" id="unnamed-chunk-1"><div class="rcode"><div class="source"><pre class="knitr r"><span class="hl std">dtrain</span><span class="hl kwb">&lt;-</span><span class="hl kwd">read.csv</span><span class="hl std">(</span><span class="hl str">&quot;https://d396qusza40orc.cloudfront.net/predmachlearn/pml-training.csv&quot;</span><span class="hl std">)</span>
+<span class="hl std">dtest</span><span class="hl kwb">&lt;-</span><span class="hl kwd">read.csv</span><span class="hl std">(</span><span class="hl str">&quot;https://d396qusza40orc.cloudfront.net/predmachlearn/pml-testing.csv&quot;</span><span class="hl std">)</span>
+</pre></div>
+</div></div>
+
+<h1>Initial data purification</h1>
+<p>Before we start doing any inference and working with the data, let us limit the data to the set of variables, which allow for meaningful inclusion in the model (as we will now further, there is no caused quality loss observed):</p>
+
+<div class="chunk" id="unnamed-chunk-2"><div class="rcode"><div class="source"><pre class="knitr r"><span class="hl std">var_names</span><span class="hl kwb">&lt;-</span><span class="hl kwd">names</span><span class="hl std">(dtrain)[</span><span class="hl opt">!</span><span class="hl std">(</span><span class="hl kwd">names</span><span class="hl std">(dtrain)</span><span class="hl opt">%in%</span><span class="hl kwd">c</span><span class="hl std">(</span><span class="hl str">'user_name'</span><span class="hl std">,</span><span class="hl str">'classe'</span><span class="hl std">,</span><span class="hl str">'X'</span><span class="hl std">,</span><span class="hl str">'raw_timestamp_part_1'</span><span class="hl std">,</span><span class="hl str">'raw_timestamp_part_2'</span><span class="hl std">,</span>
+                                              <span class="hl str">'cvtd_timestamp'</span><span class="hl std">,</span><span class="hl str">'new_window'</span><span class="hl std">,</span><span class="hl str">'num_window'</span><span class="hl std">))]</span>
+<span class="hl std">nfill</span><span class="hl kwb">&lt;-</span><span class="hl kwd">sapply</span><span class="hl std">(var_names,</span> <span class="hl kwa">function</span><span class="hl std">(</span><span class="hl kwc">i</span><span class="hl std">){</span>
+  <span class="hl kwd">suppressWarnings</span><span class="hl std">(</span>
+    <span class="hl kwd">sum</span><span class="hl std">(</span><span class="hl opt">!</span><span class="hl kwd">is.na</span><span class="hl std">(</span><span class="hl kwd">as.numeric</span><span class="hl std">(</span><span class="hl kwd">as.character</span><span class="hl std">(dtrain[,i]))))</span><span class="hl opt">/</span><span class="hl kwd">nrow</span><span class="hl std">(dtrain))}</span>
+<span class="hl std">)</span>
+<span class="hl std">var_names</span><span class="hl kwb">&lt;-</span><span class="hl kwd">names</span><span class="hl std">(nfill[nfill</span><span class="hl opt">&gt;</span><span class="hl num">0.05</span><span class="hl std">])</span>
+<span class="hl std">cors</span><span class="hl kwb">&lt;-</span><span class="hl kwd">sapply</span><span class="hl std">(var_names,</span> <span class="hl kwa">function</span><span class="hl std">(</span><span class="hl kwc">i</span><span class="hl std">){</span>
+  <span class="hl kwd">cor</span><span class="hl std">(</span><span class="hl kwd">as.numeric</span><span class="hl std">(dtrain</span><span class="hl opt">$</span><span class="hl std">classe),</span><span class="hl kwd">as.numeric</span><span class="hl std">(dtrain[,i]),</span> <span class="hl kwc">use</span> <span class="hl std">=</span> <span class="hl str">&quot;pairwise.complete.obs&quot;</span><span class="hl std">)</span>
+<span class="hl std">})</span>
+<span class="hl std">var_names</span><span class="hl kwb">&lt;-</span><span class="hl kwd">names</span><span class="hl std">(cors[</span><span class="hl kwd">abs</span><span class="hl std">(cors)</span><span class="hl opt">&gt;</span><span class="hl num">0.03</span><span class="hl std">])</span>
+<span class="hl std">dtrain</span><span class="hl kwb">&lt;-</span><span class="hl std">dtrain[,</span><span class="hl kwd">c</span><span class="hl std">(var_names,</span><span class="hl str">&quot;classe&quot;</span><span class="hl std">)]</span>
+</pre></div>
+</div></div>
+<p> Here excluded all the variables which were present in less than 5% cases, omitted model irrelevant data, like user id and record time (despite having user id in the test data, we don't expect it to be normal practice to limit the model by users list; daytime could be of interest = who's walking downstairs in in midnight?, but omitted at this stage).</p>
+<p>Also we excluded variables with small correlation with the responce: cor() could be not the perfect measure, since we actually have factor data, but I though that aov() or rank criteria would complicate the study.</p>
+<p>Therefore, we're left with ~30 predictor variables, namely:</p>
+<div class="chunk" id="unnamed-chunk-3"><div class="rcode"><div class="source"><pre class="knitr r"><span class="hl std">var_names</span>
+</pre></div>
+<div class="output"><pre class="knitr r">##  [1] &quot;roll_belt&quot;            &quot;total_accel_belt&quot;     &quot;accel_belt_z&quot;        
+##  [4] &quot;magnet_belt_y&quot;        &quot;magnet_belt_z&quot;        &quot;roll_arm&quot;            
+##  [7] &quot;pitch_arm&quot;            &quot;yaw_arm&quot;              &quot;total_accel_arm&quot;     
+## [10] &quot;accel_arm_x&quot;          &quot;accel_arm_y&quot;          &quot;accel_arm_z&quot;         
+## [13] &quot;magnet_arm_x&quot;         &quot;magnet_arm_y&quot;         &quot;magnet_arm_z&quot;        
+## [16] &quot;roll_dumbbell&quot;        &quot;pitch_dumbbell&quot;       &quot;total_accel_dumbbell&quot;
+## [19] &quot;gyros_dumbbell_y&quot;     &quot;accel_dumbbell_x&quot;     &quot;accel_dumbbell_z&quot;    
+## [22] &quot;magnet_dumbbell_x&quot;    &quot;magnet_dumbbell_z&quot;    &quot;pitch_forearm&quot;       
+## [25] &quot;yaw_forearm&quot;          &quot;total_accel_forearm&quot;  &quot;accel_forearm_x&quot;     
+## [28] &quot;magnet_forearm_x&quot;     &quot;magnet_forearm_y&quot;     &quot;magnet_forearm_z&quot;
+</pre></div>
+</div></div>
+<h1>Initial technique selection</h1>
+<p>As a setup. we have 30 continuous variables and factor response variable which takes 5 levels, quite evenly frequent. <p>
+<p><b>Declined techs:</b> Therefore, I've declined GLM-based techniques (though we can predict 5 two-level responses for each outcome state, but such constructions are quite rate, plus as we will see later, we do not have usual continuous distributions for the most of variables values, two-piked histograms do not allow for typical assumptionsto hold. Neural nets application would be complicated here as well. GBM or similar also did not seem fit here.</p>
+<p><b>Model candidates:</b> We initially included the following setups:
+<ul><li>SVM<li>C&RT, like rpart package<li>Random forest</ul>
+So, we include the following libraries:
+
+<div class="chunk" id="unnamed-chunk-4"><div class="rcode"><div class="message"><pre class="knitr r">## Loading required package: rpart
+</pre></div>
+<div class="message"><pre class="knitr r">## Loading required package: randomForest
+</pre></div>
+<div class="message"><pre class="knitr r">## randomForest 4.6-12
+</pre></div>
+<div class="message"><pre class="knitr r">## Type rfNews() to see new features/changes/bug fixes.
+</pre></div>
+<div class="message"><pre class="knitr r">## Loading required package: e1071
+</pre></div>
+<div class="message"><pre class="knitr r">## Loading required package: caret
+</pre></div>
+<div class="message"><pre class="knitr r">## Loading required package: lattice
+</pre></div>
+<div class="message"><pre class="knitr r">## Loading required package: ggplot2
+</pre></div>
+<div class="message"><pre class="knitr r">## 
+## Attaching package: 'ggplot2'
+</pre></div>
+<div class="message"><pre class="knitr r">## The following object is masked from 'package:randomForest':
+## 
+##     margin
+</pre></div>
+</div></div>
+
+
+</body>
+</html>
